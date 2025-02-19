@@ -7,6 +7,7 @@ class GreenlockProxy {
 
     constructor(opts) {
         this.maintainerEmail = opts.maintainerEmail;
+        this.enableWSS = opts.enableWSS || false;
         var staging = opts.staging || false;
         var pkg = require('./package.json');
         var Greenlock = require('@root/greenlock');
@@ -49,7 +50,7 @@ class GreenlockProxy {
                 // contact for security and critical bug notices
                 maintainerEmail: this.maintainerEmail,
                 // where to look for configuration
-                configDir: '../../greenlock.d',
+                configDir: '../../greenlock.d/',
                 // whether or not to run at cloudscale
                 cluster: false
             })
@@ -59,7 +60,10 @@ class GreenlockProxy {
     }
 
     httpsWorker(glx) {
-        this.proxy = require("http-proxy").createProxyServer({ xfwd: true });
+        this.proxy = require("http-proxy").createProxyServer({
+            xfwd: true,
+            ws: this.enableWSS // Enable/Disable WebSocket proxying!
+        });
         // catches error events during proxying
         this.proxy.on("error", function (err, req, res) {
             console.error(err);
@@ -67,6 +71,20 @@ class GreenlockProxy {
             res.end();
             return;
         })
+        // Crucial: Handle the 'upgrade' event for WebSockets
+        if (this.enableWSS) {
+            const app = glx.httpServer();
+            app.on('upgrade', (req, socket, head) => {
+                this.rules.forEach(rule => {
+                    if (rule.domains.includes(req.headers.host)) {
+                        let i = Math.floor(Math.random() * rule.targets.length);
+                        this.proxy.ws(req, socket, head, { // Use proxy.ws for upgrade
+                            target: rule.targets[i]
+                        });
+                    }
+                });
+            });
+        }
         // servers a node app that proxies requests to a localhost
         glx.serveApp(this.serveFcn.bind(this))
     }
